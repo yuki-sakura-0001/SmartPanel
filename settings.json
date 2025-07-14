@@ -1,0 +1,8 @@
+{
+  "hotkey": {
+    "use_ctrl": true,
+    "use_alt": true,
+    "use_shift": false,
+    "trigger_key": "f12" 
+  }
+}
