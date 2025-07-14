@@ -16,7 +16,9 @@ from PyQt6.QtCore import Qt, QTimer, QPoint, QRect, QObject, pyqtSignal, QSize
 from PyQt6.QtGui import QIcon # 引入 QIcon
 
 from hotkey_listener import HotkeyListener
+from enhanced_hotkey_listener import EnhancedHotkeyListener
 from add_item_dialog import AddItemDialog # 引入添加啟動項的對話框
+from search_panel import SearchPanel # 引入搜尋面板
 
 # --- Log 設定 ---
 # 這裡使用已有的 logging 配置
@@ -70,6 +72,10 @@ class MainWindow(QWidget):
         # --- 載入啟動項列表 ---
         self.load_startup_items_from_settings()
         # --- ---
+        
+        # --- 初始化搜尋面板 ---
+        self.search_panel = SearchPanel()
+        # --- ---
 
     def setup_ui(self):
         """設置窗口內的 UI 元素"""
@@ -114,10 +120,25 @@ class MainWindow(QWidget):
             QPushButton:hover { background-color: #45a049; }
         """)
         
+        search_button = QPushButton("搜尋", self)
+        search_button.clicked.connect(self.show_search_panel) # 連接到顯示搜尋面板的槽
+        search_button.setFixedSize(80, 30)
+        search_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3; /* 藍色 */
+                color: white;
+                font-size: 14px;
+                border-radius: 5px; 
+                border: none;
+            }
+            QPushButton:hover { background-color: #1976D2; }
+        """)
+        
         title_hbox = QHBoxLayout()
         title_hbox.setContentsMargins(0,0,0,0)
         title_hbox.addWidget(title_label) 
         title_hbox.addStretch(1) 
+        title_hbox.addWidget(search_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop) 
         title_hbox.addWidget(settings_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop) 
         title_hbox.addWidget(close_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop) 
         
@@ -143,7 +164,7 @@ class MainWindow(QWidget):
         self.list_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus) 
 
         # --- 底部提示區 ---
-        bottom_label = QLabel("按熱鍵顯示/隱藏面板，按 Esc 退出", self)
+        bottom_label = QLabel("按熱鍵顯示/隱藏面板，按 Esc 退出，按 Ctrl+F 或 F3 搜尋", self)
         bottom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         bottom_label.setStyleSheet("font-size: 10px; color: grey;")
         main_layout.addWidget(bottom_label)
@@ -238,6 +259,19 @@ class MainWindow(QWidget):
         
         self.add_item_dialog.exec() 
 
+    def add_new_item_to_list(self, item_data):
+        """從 AddItemDialog 接收新項目數據並添加到列表"""
+        self.add_item_to_list_widget(item_data)
+        self.save_startup_items_to_settings() # 保存到設定檔
+
+    def show_search_panel(self):
+        """顯示搜尋面板"""
+        logging.info("顯示搜尋面板")
+        self.search_panel.center()
+        self.search_panel.show()
+        self.search_panel.activateWindow()
+        self.search_panel.raise_()
+
     # --- 繼承自 QDialog 的方法，需要重寫以讓對話框可拖動 ---
     # 這些方法應該放在 AddItemDialog 類別中，而不是 MainWindow 中
     # 但為了方便調用，我們可以在 MainWindow 中也添加它們，或者讓 MainWindow 代理調用
@@ -315,6 +349,9 @@ class MainWindow(QWidget):
         elif event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
              logging.debug("偵測到 Enter 鍵按下")
              self.execute_selected_item()
+        elif event.key() == Qt.Key.Key_F3 or (event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_F):
+            # Ctrl+F 或 F3 打開搜尋面板
+            self.show_search_panel()
         elif event.key() == Qt.Key.Key_Down:
             self.move_list_selection(1) 
         elif event.key() == Qt.Key.Key_Up:
@@ -352,38 +389,47 @@ class MainWindow(QWidget):
         logging.info("執行安全退出。")
         QApplication.quit() 
 
+    def on_list_item_clicked(self, item):
+        """處理列表項點擊事件"""
+        logging.debug(f"列表項被點擊: {item.text()}")
+        self.execute_selected_item()
+
     def execute_selected_item(self):
         """執行列表欄中當前選中的項目"""
         selected_item = self.list_widget.currentItem()
         if selected_item:
             item_text = selected_item.text()
-            action_key = selected_item.data(Qt.ItemDataRole.UserRole) 
+            action_path = selected_item.data(Qt.ItemDataRole.UserRole) 
             
-            logging.info(f"執行列表項目: {item_text} (Action: {action_key})")
+            logging.info(f"執行列表項目: {item_text} (Path: {action_path})")
             
-            vscode_path = r"C:\Users\Gavin\AppData\Local\Programs\Microsoft VS Code\Code.exe" # <-- 請確認此路徑
+            if not action_path:
+                logging.warning("項目沒有設定執行路徑")
+                return
             
-            if action_key == "code":
-                logging.info("執行: 打開 VS Code")
-                try:
-                    subprocess.Popen([vscode_path]) 
-                except FileNotFoundError:
-                    logging.error(f"找不到 VS Code 路徑: {vscode_path}。請確保路徑正確。")
-            elif action_key == "chrome":
-                logging.info("執行: 打開預設瀏覽器")
-                webbrowser.open("https://www.google.com") 
-            elif action_key == "explorer":
-                logging.info("執行: 打開文件管理器")
-                try:
-                    subprocess.Popen([r"C:\Windows\explorer.exe"])
-                except FileNotFoundError:
-                    logging.error("找不到 'explorer.exe' 命令。")
-            elif action_key == "script":
-                logging.info("執行: 一個示例腳本")
-                try:
-                    subprocess.Popen([sys.executable, "my_script.py"]) 
-                except FileNotFoundError:
-                    logging.error("找不到 'my_script.py' 或 python 解釋器。")
+            try:
+                # 判斷是否為網址
+                if action_path.startswith(("http://", "https://")):
+                    logging.info(f"打開網址: {action_path}")
+                    webbrowser.open(action_path)
+                # 判斷是否為 Python 腳本
+                elif action_path.endswith(".py"):
+                    logging.info(f"執行 Python 腳本: {action_path}")
+                    subprocess.Popen([sys.executable, action_path])
+                # 其他文件或程式
+                else:
+                    logging.info(f"執行程式或打開文件: {action_path}")
+                    if os.name == 'nt':  # Windows
+                        subprocess.Popen([action_path], shell=True)
+                    else:  # Linux/macOS
+                        subprocess.Popen([action_path])
+                        
+                # 執行後隱藏面板
+                self.hide()
+                        
+            except Exception as e:
+                logging.error(f"執行項目時發生錯誤: {e}")
+                QMessageBox.warning(self, "執行錯誤", f"無法執行 {item_text}:\n{str(e)}")
         else:
             logging.warning("沒有選中任何列表項目。")
 
@@ -395,8 +441,9 @@ if __name__ == '__main__':
     window = MainWindow()
 
     # --- 熱鍵監聽設定 ---
-    listener = HotkeyListener()
-    listener.emitter.activated.connect(window.toggle_visibility)
+    listener = EnhancedHotkeyListener()
+    listener.emitter.main_panel_activated.connect(window.toggle_visibility)
+    listener.emitter.search_panel_activated.connect(window.show_search_panel)
     listener.start()
     # --- 設定結束 ---
 
