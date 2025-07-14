@@ -187,6 +187,7 @@ python main.py
 
 - GitHub Issues: [提交問題或建議](https://github.com/yuki-sakura-0001/SmartPanel/issues)
 - 專案主頁: [SmartPanel](https://github.com/yuki-sakura-0001/SmartPanel)
+- ai製作：https://manus.im/share/Vrnri34rRKCHeW2UQMRBDc?replay=1
 
 ---
 
