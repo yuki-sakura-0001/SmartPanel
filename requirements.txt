@@ -1,3 +1,6 @@
 PyQt6>=6.9.0
 python-xlib>=0.33
+# Windows 專用 - Everything 整合
+# PyEverything (需要在 Windows 環境中手動安裝)
+# pip install git+https://github.com/nambread/PyEverything#egg=PyEverything
 

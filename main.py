@@ -19,6 +19,9 @@ from hotkey_listener import HotkeyListener
 from enhanced_hotkey_listener import EnhancedHotkeyListener
 from add_item_dialog import AddItemDialog # 引入添加啟動項的對話框
 from search_panel import SearchPanel # 引入搜尋面板
+from settings_dialog import SettingsDialog # 引入設定對話框
+from mouse_gesture import MouseGestureHandler, GlobalMouseGestureFilter # 引入滑鼠手勢
+from ui_themes import theme_manager, apply_theme_to_widget # 引入主題管理器
 
 # --- Log 設定 ---
 # 這裡使用已有的 logging 配置
@@ -76,6 +79,23 @@ class MainWindow(QWidget):
         # --- 初始化搜尋面板 ---
         self.search_panel = SearchPanel()
         # --- ---
+        
+        # --- 初始化設定對話框 ---
+        self.settings_dialog = None
+        # --- ---
+        
+        # --- 初始化滑鼠手勢 ---
+        self.gesture_handler = MouseGestureHandler()
+        self.gesture_handler.gesture_recognized.connect(self.handle_gesture)
+        self.gesture_filter = GlobalMouseGestureFilter(self.gesture_handler)
+        self.installEventFilter(self.gesture_filter)
+        # --- ---
+        
+        # --- 初始化主題管理器 ---
+        theme_manager.load_settings()
+        theme_manager.theme_changed.connect(self.apply_current_theme)
+        self.apply_current_theme()
+        # --- ---
 
     def setup_ui(self):
         """設置窗口內的 UI 元素"""
@@ -104,34 +124,51 @@ class MainWindow(QWidget):
             }
             QPushButton:hover { background-color: #c00; }
         """)
-        close_button.clicked.connect(self.close) 
+        close_button.clicked.connect(self.close)
         
         settings_button = QPushButton("設置", self)
-        settings_button.clicked.connect(self.open_add_item_dialog) # 連接到打開設置對話框的槽
+        settings_button.clicked.connect(self.show_settings_dialog)
         settings_button.setFixedSize(80, 30)
         settings_button.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50; /* 綠色 */
+                background-color: #2196F3; 
                 color: white;
                 font-size: 14px;
-                border-radius: 5px; 
+                font-weight: bold;
+                border-radius: 15px; 
+                border: none;
+            }
+            QPushButton:hover { background-color: #1976D2; }
+        """)
+        
+        add_item_button = QPushButton("添加", self)
+        add_item_button.clicked.connect(self.show_add_item_dialog)
+        add_item_button.setFixedSize(80, 30)
+        add_item_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50; 
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                border-radius: 15px; 
                 border: none;
             }
             QPushButton:hover { background-color: #45a049; }
         """)
         
         search_button = QPushButton("搜尋", self)
-        search_button.clicked.connect(self.show_search_panel) # 連接到顯示搜尋面板的槽
+        search_button.clicked.connect(self.show_search_panel)
         search_button.setFixedSize(80, 30)
         search_button.setStyleSheet("""
             QPushButton {
-                background-color: #2196F3; /* 藍色 */
+                background-color: #FF9800; 
                 color: white;
                 font-size: 14px;
-                border-radius: 5px; 
+                font-weight: bold;
+                border-radius: 15px; 
                 border: none;
             }
-            QPushButton:hover { background-color: #1976D2; }
+            QPushButton:hover { background-color: #F57C00; }
         """)
         
         title_hbox = QHBoxLayout()
@@ -139,6 +176,7 @@ class MainWindow(QWidget):
         title_hbox.addWidget(title_label) 
         title_hbox.addStretch(1) 
         title_hbox.addWidget(search_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop) 
+        title_hbox.addWidget(add_item_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         title_hbox.addWidget(settings_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop) 
         title_hbox.addWidget(close_button, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop) 
         
@@ -249,7 +287,68 @@ class MainWindow(QWidget):
         self.list_widget.addItem(item)
         self.list_widget.scrollToItem(item) # 滾動到新添加的項目
 
-    def open_add_item_dialog(self):
+    def show_settings_dialog(self):
+        """顯示設定對話框"""
+        if self.settings_dialog is None:
+            self.settings_dialog = SettingsDialog(self)
+            self.settings_dialog.settings_changed.connect(self.on_settings_changed)
+        
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
+        
+    def on_settings_changed(self):
+        """設定變更時的處理"""
+        # 重新載入設定
+        self.load_startup_items_from_settings()
+        
+        # 更新滑鼠手勢設定
+        self.gesture_handler.load_settings()
+        
+        # 重新載入主題設定
+        theme_manager.load_settings()
+        self.apply_current_theme()
+        
+        # 可以在這裡添加其他需要更新的設定
+        logging.info("設定已更新")
+        
+    def apply_current_theme(self):
+        """應用當前主題"""
+        apply_theme_to_widget(self)
+        
+        # 同時應用到搜尋面板
+        if hasattr(self, 'search_panel') and self.search_panel:
+            apply_theme_to_widget(self.search_panel)
+            
+        # 應用到設定對話框
+        if hasattr(self, 'settings_dialog') and self.settings_dialog:
+            apply_theme_to_widget(self.settings_dialog)
+        
+    def handle_gesture(self, pattern):
+        """處理手勢識別結果"""
+        logging.info(f"處理手勢: {pattern}")
+        self.gesture_handler.execute_gesture_action(pattern)
+        
+        # 根據手勢執行相應動作
+        if pattern == "↑":
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        elif pattern == "↓":
+            self.hide()
+        elif pattern == "→":
+            self.show_search_panel()
+        elif pattern == "←":
+            # 返回操作
+            if self.search_panel.isVisible():
+                self.search_panel.hide()
+            else:
+                self.hide()
+        elif pattern == "○":
+            # 關閉應用
+            self.close()
+            
+    def show_add_item_dialog(self):
         """打開添加/編輯啟動項對話框"""
         logging.info("打開啟動項管理對話框。")
         # 這裡我們只實現添加功能，如果需要編輯，需要傳入點擊的 item_data

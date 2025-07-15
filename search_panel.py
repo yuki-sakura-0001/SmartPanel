@@ -8,18 +8,27 @@ import webbrowser
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QListWidget, 
-    QListWidgetItem, QLabel, QFrame, QPushButton
+    QListWidgetItem, QLabel, QFrame, QPushButton, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPoint
 from PyQt6.QtGui import QIcon, QFont
+
+# 嘗試導入 Everything 整合模組
+try:
+    from everything_integration import EverythingIntegration, EverythingSearchThread
+    EVERYTHING_AVAILABLE = True
+except ImportError:
+    EVERYTHING_AVAILABLE = False
+    logging.warning("Everything 整合模組不可用")
 
 class SearchThread(QThread):
     """搜尋執行緒，避免阻塞 UI"""
     results_ready = pyqtSignal(list)
     
-    def __init__(self, query):
+    def __init__(self, query, use_everything=False):
         super().__init__()
         self.query = query
+        self.use_everything = use_everything and EVERYTHING_AVAILABLE
         
     def run(self):
         """執行搜尋"""
@@ -29,15 +38,38 @@ class SearchThread(QThread):
             self.results_ready.emit(results)
             return
             
-        # 基本文件搜尋 (使用 Python 內建功能)
-        try:
-            results.extend(self.search_files(self.query))
-        except Exception as e:
-            logging.error(f"文件搜尋錯誤: {e}")
-            
+        # 如果啟用 Everything 且可用，優先使用 Everything
+        if self.use_everything:
+            try:
+                everything = EverythingIntegration()
+                if everything.is_available:
+                    everything_results = everything.search(self.query, max_results=30)
+                    for result in everything_results:
+                        results.append({
+                            "name": result.name,
+                            "path": result.path,
+                            "type": "folder" if result.is_folder else "file",
+                            "icon": "folder" if result.is_folder else self.get_file_icon(Path(result.path)),
+                            "source": "everything"
+                        })
+            except Exception as e:
+                logging.error(f"Everything 搜尋錯誤: {e}")
+        
+        # 如果 Everything 不可用或結果不足，使用基本文件搜尋
+        if len(results) < 10:
+            try:
+                basic_results = self.search_files(self.query)
+                for result in basic_results:
+                    # 避免重複結果
+                    if not any(r["path"] == result["path"] for r in results):
+                        results.append(result)
+            except Exception as e:
+                logging.error(f"基本文件搜尋錯誤: {e}")
+                
         # 應用程式搜尋
         try:
-            results.extend(self.search_applications(self.query))
+            app_results = self.search_applications(self.query)
+            results.extend(app_results)
         except Exception as e:
             logging.error(f"應用程式搜尋錯誤: {e}")
             
@@ -134,7 +166,7 @@ class SearchThread(QThread):
             return "file"
 
 class SearchPanel(QWidget):
-    """搜尋面板主類"""
+    """全局搜尋面板"""
     
     def __init__(self):
         super().__init__()
@@ -148,6 +180,25 @@ class SearchPanel(QWidget):
         self.search_timer.timeout.connect(self.perform_search)
         
         self.setup_ui()
+        self.setup_connections()
+        
+        # 檢查 Everything 可用性
+        self.everything_available = EVERYTHING_AVAILABLE
+        if self.everything_available:
+            try:
+                from everything_integration import EverythingIntegration
+                everything = EverythingIntegration()
+                self.everything_available = everything.is_available
+            except:
+                self.everything_available = False
+                
+        # 更新 Everything 選項可用性
+        self.everything_checkbox.setEnabled(self.everything_available)
+        if not self.everything_available:
+            self.everything_checkbox.setToolTip("Everything 不可用 (僅限 Windows)")
+        else:
+            self.everything_checkbox.setToolTip("使用 Everything 進行高速文件搜尋")
+            self.everything_checkbox.setChecked(True)  # 預設啟用
         self.center()
         
         self._drag_pos = QPoint()
@@ -204,8 +255,21 @@ class SearchPanel(QWidget):
                 border-color: #4CAF50;
             }
         """)
-        self.search_input.textChanged.connect(self.on_search_text_changed)
-        self.search_input.returnPressed.connect(self.execute_selected_result)
+        
+        # 搜尋選項
+        options_layout = QHBoxLayout()
+        
+        self.everything_checkbox = QCheckBox("使用 Everything 高速搜尋")
+        self.everything_checkbox.setChecked(True)
+        self.everything_checkbox.setStyleSheet("""
+            QCheckBox {
+                font-size: 12px;
+                color: #666;
+            }
+        """)
+        
+        options_layout.addWidget(self.everything_checkbox)
+        options_layout.addStretch()
         
         # 結果列表
         self.results_list = QListWidget(self)
@@ -236,11 +300,18 @@ class SearchPanel(QWidget):
         main_layout.addLayout(title_layout)
         main_layout.addWidget(separator)
         main_layout.addWidget(self.search_input)
+        main_layout.addLayout(options_layout)
         main_layout.addWidget(self.results_list)
         main_layout.addWidget(self.status_label)
         
         # 設置焦點
         self.search_input.setFocus()
+        
+    def setup_connections(self):
+        """設置信號連接"""
+        self.search_input.textChanged.connect(self.on_search_text_changed)
+        self.search_input.returnPressed.connect(self.execute_selected_result)
+        self.results_list.itemClicked.connect(self.execute_selected_result)
         
     def center(self):
         """將視窗移動到螢幕中央"""
@@ -264,17 +335,25 @@ class SearchPanel(QWidget):
             self.status_label.setText("輸入關鍵字開始搜尋")
             return
             
-        self.status_label.setText("搜尋中...")
-        
-        # 停止之前的搜尋執行緒
+        # 停止之前的搜尋
         if self.search_thread and self.search_thread.isRunning():
             self.search_thread.terminate()
             self.search_thread.wait()
             
-        # 開始新的搜尋
-        self.search_thread = SearchThread(query)
-        self.search_thread.results_ready.connect(self.display_results)
+        self.status_label.setText("搜尋中...")
+        self.results_list.clear()
+        
+        # 檢查是否使用 Everything
+        use_everything = self.everything_checkbox.isChecked() and self.everything_available
+        
+        # 啟動搜尋執行緒
+        self.search_thread = SearchThread(query, use_everything)
+        self.search_thread.results_ready.connect(self.on_search_results)
         self.search_thread.start()
+        
+    def on_search_results(self, results):
+        """處理搜尋結果"""
+        self.display_results(results)
         
     def display_results(self, results):
         """顯示搜尋結果"""
